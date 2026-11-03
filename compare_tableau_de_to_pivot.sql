@@ -142,3 +142,51 @@ GROUP BY side,
               WHEN new_de IS NULL THEN N'missing NEW DE'
               ELSE N'included in chart query' END
 ORDER BY side,bucket;
+
+-- 4. Reconcile current workbook hours rows through the enrichment stages.
+-- Stage counts above one indicate a row expanded in a join.
+SELECT forecast_month, segment, status,
+       COUNT_BIG(*) AS source_rows,
+       SUM(combined_rows) AS combined_rows,
+       SUM(glc_rows) AS glc_rows,
+       SUM(calendar_rows) AS calendar_rows,
+       SUM(budget_rows) AS budget_rows,
+       ROUND(SUM(raw_de),3) AS raw_de,
+       ROUND(SUM(final_de),3) AS final_de,
+       ROUND(SUM(raw_minus_final),3) AS raw_minus_final
+FROM [dbo].[LaborForecastDEReconciliation_dev]
+GROUP BY forecast_month,segment,status
+HAVING ABS(SUM(raw_minus_final)) > 0.01
+    OR status <> 'included'
+ORDER BY forecast_month,segment,status;
+
+-- 5. Inspect the rows contributing the largest absolute differences.
+SELECT TOP (100) forecast_month,segment,forecast_type,program,glc,
+       source_row,new_hours,raw_de,final_de,raw_minus_final,
+       combined_rows,glc_rows,calendar_rows,budget_rows,status
+FROM [dbo].[LaborForecastDEReconciliation_dev]
+WHERE ABS(raw_minus_final) > 0.01
+ORDER BY ABS(raw_minus_final) DESC,forecast_month,segment,source_row;
+
+-- 6. Verify that source-linked final DE accounts for the processed total.
+WITH linked AS (
+    SELECT forecast_month, ROUND(SUM(raw_de),6) AS raw_de,
+           ROUND(SUM(final_de),6) AS linked_final_de
+    FROM [dbo].[LaborForecastDEReconciliation_dev]
+    GROUP BY forecast_month
+),
+processed AS (
+    SELECT CONVERT(char(7),TRY_CONVERT(date,[DateTime_Out]),120) AS forecast_month,
+           ROUND(SUM(TRY_CONVERT(float,[NEW DE])),6) AS processed_de
+    FROM [dbo].[LaborForecastQuarterCompareFinal_dev]
+    WHERE TRY_CONVERT(date,[DateTime_Out]) >= '2026-10-01'
+      AND TRY_CONVERT(date,[DateTime_Out]) < '2027-10-01'
+      AND CONVERT(nvarchar(255),[Category]) = N'Hours'
+    GROUP BY CONVERT(char(7),TRY_CONVERT(date,[DateTime_Out]),120)
+)
+SELECT COALESCE(l.forecast_month,p.forecast_month) AS forecast_month,
+       l.raw_de,l.linked_final_de,p.processed_de,
+       ROUND(p.processed_de-l.linked_final_de,6) AS unlinked_final_de
+FROM linked AS l FULL JOIN processed AS p
+  ON l.forecast_month=p.forecast_month
+ORDER BY forecast_month;
