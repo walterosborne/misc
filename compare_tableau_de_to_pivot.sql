@@ -1,12 +1,12 @@
--- Read-only reconciliation of Will's Excel DE pivot, SQL, and Tableau.
+-- Read-only reconciliation of reference DE totals with SQL output.
 -- Run in NGDS_WS_Supply. No objects are created or changed.
 -- Original: [NORTHGRUM\N35589].[LaborForecastQuarterCompareFinal]
 -- Notebook: [dbo].[LaborForecastQuarterCompareFinal_dev]
 --
--- Will's pivot (10/22 screenshot) is rounded to whole DE by Segment.
+-- Reference values are rounded to whole DE by Segment.
 -- Compare the SQL measures and their deltas; a difference under 0.5
--- can be ordinary display rounding. Tableau must be checked separately
--- against the by-Type result below, with the same filters and refresh.
+-- can be ordinary display rounding. Compare the by-Type result using
+-- the same date range, measure, and filters.
 SET NOCOUNT ON;
 
 DECLARE @pivot TABLE (
@@ -29,9 +29,8 @@ INSERT INTO @pivot (forecast_month, segment, pivot_de) VALUES
 ('2027-08-01',N'AP&S',294),('2027-08-01',N'NCTA',128),('2027-08-01',N'Propulsion & Controls',366),
 ('2027-09-01',N'AP&S',320),('2027-09-01',N'NCTA',127),('2027-09-01',N'Propulsion & Controls',373);
 
--- 1. Segment-level SQL totals against the pivot, for both candidate DE fields.
--- The all-Type total is intentional: it matches the pivot's grand total if
--- the pivot includes both Labor Forecast and Opportunity.
+-- 1. Segment-level totals for both DE fields.
+-- The all-Type total includes both Labor Forecast and Opportunity.
 WITH rows AS (
     SELECT N'original' AS side, TRY_CONVERT(date,[DateTime_Out]) AS forecast_date,
            NULLIF(LTRIM(RTRIM(CONVERT(nvarchar(255),[Segment]))),N'') AS segment,
@@ -68,9 +67,8 @@ LEFT JOIN totals AS o ON o.forecast_month=p.forecast_month AND o.segment=p.segme
 LEFT JOIN totals AS d ON d.forecast_month=p.forecast_month AND d.segment=p.segment AND d.side=N'dev'
 ORDER BY p.forecast_month,p.segment;
 
--- 2. Reproduce the SQL monthly grand totals and chart stacks by Type.
--- Compare each Type and the combined total with Tableau's blue/yellow labels.
--- No Segment filter is applied here, like the screenshot's (All) filters.
+-- 2. Monthly totals by Type and across all Types.
+-- No Segment filter is applied.
 WITH rows AS (
     SELECT N'original' AS side, TRY_CONVERT(date,[DateTime_Out]) AS forecast_date,
            COALESCE(NULLIF(LTRIM(RTRIM(CONVERT(nvarchar(255),[Type]))),N''),N'<NULL>') AS forecast_type,
@@ -103,7 +101,7 @@ ORDER BY forecast_month,side,
          CASE WHEN GROUPING(forecast_type)=1 THEN 1 ELSE 0 END,forecast_type;
 
 -- 3. Find records the SQL chart query excludes: missing/invalid month,
--- non-Hours Category, or missing DE. These can explain a Tableau gap.
+-- non-Hours Category, or missing DE.
 WITH rows AS (
     SELECT N'original' AS side,[DateTime_Out] AS raw_date,
            CONVERT(nvarchar(255),[Category]) AS category,
