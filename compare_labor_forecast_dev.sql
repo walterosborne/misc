@@ -1,5 +1,6 @@
 -- Read-only comparison of Alteryx tables and notebook _dev tables.
 -- Run after both notebook output cells finish. No tables are changed.
+-- Production tables are in [NORTHGRUM\N35589]; notebook _dev tables are in [dbo].
 SET NOCOUNT ON;
 
 DECLARE @pairs TABLE (original_name sysname NOT NULL, dev_name sysname NOT NULL);
@@ -7,6 +8,8 @@ INSERT INTO @pairs (original_name, dev_name) VALUES
     (N'LaborForecastQuarterCompareFinal', N'LaborForecastQuarterCompareFinal_dev'),
     (N'HeadcountVSActuals', N'HeadcountVSActuals_dev');
 
+DECLARE @original_schema sysname = N'NORTHGRUM\N35589';
+DECLARE @dev_schema sysname = N'dbo';
 DECLARE @original sysname, @dev sysname, @original_id int, @dev_id int;
 DECLARE @columns nvarchar(max), @sql nvarchar(max);
 DECLARE @original_rows bigint, @dev_rows bigint, @original_only bigint, @dev_only bigint;
@@ -17,8 +20,8 @@ OPEN pair_cursor;
 FETCH NEXT FROM pair_cursor INTO @original, @dev;
 WHILE @@FETCH_STATUS = 0
 BEGIN
-    SET @original_id = OBJECT_ID(N'dbo.' + QUOTENAME(@original), N'U');
-    SET @dev_id = OBJECT_ID(N'dbo.' + QUOTENAME(@dev), N'U');
+    SET @original_id = OBJECT_ID(QUOTENAME(@original_schema) + N'.' + QUOTENAME(@original), N'U');
+    SET @dev_id = OBJECT_ID(QUOTENAME(@dev_schema) + N'.' + QUOTENAME(@dev), N'U');
     IF @original_id IS NULL OR @dev_id IS NULL
     BEGIN
         SELECT @original AS original_table, @dev AS dev_table,
@@ -64,17 +67,17 @@ BEGIN
     END;
 
     SET @sql = N'
-SELECT @original_rows = COUNT_BIG(*) FROM dbo.' + QUOTENAME(@original) + N';
-SELECT @dev_rows = COUNT_BIG(*) FROM dbo.' + QUOTENAME(@dev) + N';
+SELECT @original_rows = COUNT_BIG(*) FROM ' + QUOTENAME(@original_schema) + N'.' + QUOTENAME(@original) + N';
+SELECT @dev_rows = COUNT_BIG(*) FROM ' + QUOTENAME(@dev_schema) + N'.' + QUOTENAME(@dev) + N';
 SELECT @original_only = COUNT_BIG(*) FROM (
-    SELECT ' + @columns + N' FROM dbo.' + QUOTENAME(@original) + N'
+    SELECT ' + @columns + N' FROM ' + QUOTENAME(@original_schema) + N'.' + QUOTENAME(@original) + N'
     EXCEPT
-    SELECT ' + @columns + N' FROM dbo.' + QUOTENAME(@dev) + N'
+    SELECT ' + @columns + N' FROM ' + QUOTENAME(@dev_schema) + N'.' + QUOTENAME(@dev) + N'
 ) AS x;
 SELECT @dev_only = COUNT_BIG(*) FROM (
-    SELECT ' + @columns + N' FROM dbo.' + QUOTENAME(@dev) + N'
+    SELECT ' + @columns + N' FROM ' + QUOTENAME(@dev_schema) + N'.' + QUOTENAME(@dev) + N'
     EXCEPT
-    SELECT ' + @columns + N' FROM dbo.' + QUOTENAME(@original) + N'
+    SELECT ' + @columns + N' FROM ' + QUOTENAME(@original_schema) + N'.' + QUOTENAME(@original) + N'
 ) AS x;';
     EXEC sys.sp_executesql @sql,
         N'@original_rows bigint OUTPUT, @dev_rows bigint OUTPUT,
@@ -95,11 +98,11 @@ SELECT @dev_only = COUNT_BIG(*) FROM (
     BEGIN
         SET @sql = N'
 SELECT TOP (20) ' + QUOTENAME(@original,'''') + N' AS source_table, x.*
-FROM (SELECT ' + @columns + N' FROM dbo.' + QUOTENAME(@original) + N'
-      EXCEPT SELECT ' + @columns + N' FROM dbo.' + QUOTENAME(@dev) + N') AS x;
+FROM (SELECT ' + @columns + N' FROM ' + QUOTENAME(@original_schema) + N'.' + QUOTENAME(@original) + N'
+      EXCEPT SELECT ' + @columns + N' FROM ' + QUOTENAME(@dev_schema) + N'.' + QUOTENAME(@dev) + N') AS x;
 SELECT TOP (20) ' + QUOTENAME(@dev,'''') + N' AS source_table, x.*
-FROM (SELECT ' + @columns + N' FROM dbo.' + QUOTENAME(@dev) + N'
-      EXCEPT SELECT ' + @columns + N' FROM dbo.' + QUOTENAME(@original) + N') AS x;';
+FROM (SELECT ' + @columns + N' FROM ' + QUOTENAME(@dev_schema) + N'.' + QUOTENAME(@dev) + N'
+      EXCEPT SELECT ' + @columns + N' FROM ' + QUOTENAME(@original_schema) + N'.' + QUOTENAME(@original) + N') AS x;';
         EXEC sys.sp_executesql @sql;
     END;
     FETCH NEXT FROM pair_cursor INTO @original, @dev;
