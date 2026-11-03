@@ -1,6 +1,6 @@
--- Read-only, compact follow-up to compare_labor_forecast_dev.sql.
--- Run in NGDS_WS_Supply after both notebook output cells finish.
--- Production: [NORTHGRUM\N35589]; notebook outputs: [dbo].
+-- Read-only reconciliation of forecast and headcount aggregates.
+-- Run in NGDS_WS_Supply after both dev tables are populated.
+-- Production: [NORTHGRUM\N35589]; dev: [dbo].
 SET NOCOUNT ON;
 
 -- Compare month/type/category row counts and major measures.
@@ -76,8 +76,7 @@ FROM headcount_rows
 GROUP BY forecast_type
 ORDER BY forecast_type;
 
--- Source metadata: check whether the Alteryx table and notebook were built
--- from the same workbook versions. The metadata formats may differ.
+-- Source metadata and output timestamps. Metadata formats may differ.
 SELECT N'original' AS side, [TimeStamp] AS output_timestamp,
        LEFT(CONVERT(nvarchar(max), [Concat_File Name & Last Time Updated]), 1000) AS input_files
 FROM [NORTHGRUM\N35589].[LaborForecastQuarterCompareFinal]
@@ -89,8 +88,7 @@ FROM [dbo].[LaborForecastQuarterCompareFinal_dev]
 ORDER BY TRY_CONVERT(datetime2, [TimeStamp]) DESC
 OFFSET 0 ROWS FETCH NEXT 1 ROW ONLY;
 
--- The month summary showed 99 extra production Labor Forecast rows per month
--- from Oct 2026 through Aug 2027. Locate the October cohort by business keys.
+-- Compare October Labor Forecast business-key counts.
 WITH october_rows AS (
     SELECT N'original' AS side,
            CONVERT(nvarchar(255), [Program]) AS program,
