@@ -75,3 +75,55 @@ SELECT forecast_type,
 FROM headcount_rows
 GROUP BY forecast_type
 ORDER BY forecast_type;
+
+-- Source metadata: check whether the Alteryx table and notebook were built
+-- from the same workbook versions. The metadata formats may differ.
+SELECT N'original' AS side, [TimeStamp] AS output_timestamp,
+       LEFT(CONVERT(nvarchar(max), [Concat_File Name & Last Time Updated]), 1000) AS input_files
+FROM [NORTHGRUM\N35589].[LaborForecastQuarterCompareFinal]
+ORDER BY TRY_CONVERT(datetime2, [TimeStamp]) DESC
+OFFSET 0 ROWS FETCH NEXT 1 ROW ONLY;
+SELECT N'dev' AS side, [TimeStamp] AS output_timestamp,
+       LEFT(CONVERT(nvarchar(max), [Concat_File Name & Last Time Updated]), 1000) AS input_files
+FROM [dbo].[LaborForecastQuarterCompareFinal_dev]
+ORDER BY TRY_CONVERT(datetime2, [TimeStamp]) DESC
+OFFSET 0 ROWS FETCH NEXT 1 ROW ONLY;
+
+-- The month summary showed 99 extra production Labor Forecast rows per month
+-- from Oct 2026 through Aug 2027. Locate the October cohort by business keys.
+WITH october_rows AS (
+    SELECT N'original' AS side,
+           CONVERT(nvarchar(255), [Program]) AS program,
+           CONVERT(nvarchar(255), [Project Family]) AS project_family,
+           CONVERT(nvarchar(255), [Lane]) AS lane,
+           CONVERT(nvarchar(255), [Segment]) AS segment,
+           CONVERT(nvarchar(255), [Firm/FO-SS/New]) AS firm_category,
+           CONVERT(nvarchar(255), [GLC]) AS glc
+    FROM [NORTHGRUM\N35589].[LaborForecastQuarterCompareFinal]
+    WHERE [Type] = N'Labor Forecast'
+      AND TRY_CONVERT(date, [DateTime_Out]) >= '2026-10-01'
+      AND TRY_CONVERT(date, [DateTime_Out]) < '2026-11-01'
+      AND [Category] = N'Hours'
+    UNION ALL
+    SELECT N'dev', CONVERT(nvarchar(255), [Program]),
+           CONVERT(nvarchar(255), [Project Family]),
+           CONVERT(nvarchar(255), [Lane]), CONVERT(nvarchar(255), [Segment]),
+           CONVERT(nvarchar(255), [Firm/FO-SS/New]), CONVERT(nvarchar(255), [GLC])
+    FROM [dbo].[LaborForecastQuarterCompareFinal_dev]
+    WHERE [Type] = N'Labor Forecast'
+      AND TRY_CONVERT(date, [DateTime_Out]) >= '2026-10-01'
+      AND TRY_CONVERT(date, [DateTime_Out]) < '2026-11-01'
+      AND [Category] = N'Hours'
+),
+key_counts AS (
+    SELECT program, project_family, lane, segment, firm_category, glc,
+           SUM(CASE WHEN side = N'original' THEN 1 ELSE 0 END) AS original_rows,
+           SUM(CASE WHEN side = N'dev' THEN 1 ELSE 0 END) AS dev_rows
+    FROM october_rows
+    GROUP BY program, project_family, lane, segment, firm_category, glc
+)
+SELECT TOP (50) program, project_family, lane, segment, firm_category, glc,
+       original_rows, dev_rows, dev_rows - original_rows AS row_difference
+FROM key_counts
+WHERE original_rows <> dev_rows
+ORDER BY ABS(dev_rows - original_rows) DESC, program, glc;
