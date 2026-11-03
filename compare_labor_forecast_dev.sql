@@ -1,6 +1,6 @@
--- Read-only comparison of Alteryx tables and notebook _dev tables.
--- Run after both notebook output cells finish. No tables are changed.
--- Production tables are in [NORTHGRUM\N35589]; notebook _dev tables are in [dbo].
+-- Read-only comparison of production and dev tables.
+-- Run after both dev tables are populated. No tables are changed.
+-- Production tables are in [NORTHGRUM\N35589]; dev tables are in [dbo].
 SET NOCOUNT ON;
 
 DECLARE @pairs TABLE (original_name sysname NOT NULL, dev_name sysname NOT NULL);
