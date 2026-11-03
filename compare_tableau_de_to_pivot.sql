@@ -1,37 +1,31 @@
--- Read-only reconciliation of reference DE totals with SQL output.
--- Run in NGDS_WS_Supply. No objects are created or changed.
--- Original: [NORTHGRUM\N35589].[LaborForecastQuarterCompareFinal]
--- Notebook: [dbo].[LaborForecastQuarterCompareFinal_dev]
---
--- Reference values are rounded to whole DE by Segment.
--- Compare the SQL measures and their deltas; a difference under 0.5
--- can be ordinary display rounding. Compare the by-Type result using
--- the same date range, measure, and filters.
+-- Read-only reconciliation of raw monthly DE and processed forecast output.
+-- Run in NGDS_WS_Supply after both dev uploads finish.
+-- The raw table retains the DE basis used to generate its monthly totals.
 SET NOCOUNT ON;
 
-DECLARE @pivot TABLE (
-    forecast_month date NOT NULL,
-    segment nvarchar(100) NOT NULL,
-    pivot_de float NOT NULL,
-    PRIMARY KEY (forecast_month, segment)
-);
-INSERT INTO @pivot (forecast_month, segment, pivot_de) VALUES
-('2026-10-01',N'AP&S',188),('2026-10-01',N'NCTA',63),('2026-10-01',N'Propulsion & Controls',409),
-('2026-11-01',N'AP&S',215),('2026-11-01',N'NCTA',38),('2026-11-01',N'Propulsion & Controls',412),
-('2026-12-01',N'AP&S',196),('2026-12-01',N'NCTA',25),('2026-12-01',N'Propulsion & Controls',457),
-('2027-01-01',N'AP&S',266),('2027-01-01',N'NCTA',94),('2027-01-01',N'Propulsion & Controls',534),
-('2027-02-01',N'AP&S',271),('2027-02-01',N'NCTA',74),('2027-02-01',N'Propulsion & Controls',507),
-('2027-03-01',N'AP&S',298),('2027-03-01',N'NCTA',80),('2027-03-01',N'Propulsion & Controls',428),
-('2027-04-01',N'AP&S',278),('2027-04-01',N'NCTA',96),('2027-04-01',N'Propulsion & Controls',387),
-('2027-05-01',N'AP&S',272),('2027-05-01',N'NCTA',95),('2027-05-01',N'Propulsion & Controls',386),
-('2027-06-01',N'AP&S',280),('2027-06-01',N'NCTA',90),('2027-06-01',N'Propulsion & Controls',332),
-('2027-07-01',N'AP&S',323),('2027-07-01',N'NCTA',133),('2027-07-01',N'Propulsion & Controls',375),
-('2027-08-01',N'AP&S',294),('2027-08-01',N'NCTA',128),('2027-08-01',N'Propulsion & Controls',366),
-('2027-09-01',N'AP&S',320),('2027-09-01',N'NCTA',127),('2027-09-01',N'Propulsion & Controls',373);
-
--- 1. Segment-level totals for both DE fields.
--- The all-Type total includes both Labor Forecast and Opportunity.
-WITH rows AS (
+-- 1. Segment-level totals for each forecast month.
+-- Raw values come from current workbook rows before downstream enrichment.
+WITH raw_values AS (
+    SELECT r.[DE Basis] AS de_basis,
+           NULLIF(LTRIM(RTRIM(CONVERT(nvarchar(255),r.[Segment]))),N'') AS segment,
+           m.forecast_month, TRY_CONVERT(float,m.de_value) AS raw_de
+    FROM [dbo].[LaborForecastRawDEBySegment_dev] AS r
+    CROSS APPLY (VALUES
+        (CONVERT(date,'2026-10-01'),r.[Oct-26]),
+        (CONVERT(date,'2026-11-01'),r.[Nov-26]),
+        (CONVERT(date,'2026-12-01'),r.[Dec-26]),
+        (CONVERT(date,'2027-01-01'),r.[Jan-27]),
+        (CONVERT(date,'2027-02-01'),r.[Feb-27]),
+        (CONVERT(date,'2027-03-01'),r.[Mar-27]),
+        (CONVERT(date,'2027-04-01'),r.[Apr-27]),
+        (CONVERT(date,'2027-05-01'),r.[May-27]),
+        (CONVERT(date,'2027-06-01'),r.[Jun-27]),
+        (CONVERT(date,'2027-07-01'),r.[Jul-27]),
+        (CONVERT(date,'2027-08-01'),r.[Aug-27]),
+        (CONVERT(date,'2027-09-01'),r.[Sep-27])
+    ) AS m(forecast_month,de_value)
+),
+rows AS (
     SELECT N'original' AS side, TRY_CONVERT(date,[DateTime_Out]) AS forecast_date,
            NULLIF(LTRIM(RTRIM(CONVERT(nvarchar(255),[Segment]))),N'') AS segment,
            NULLIF(LTRIM(RTRIM(CONVERT(nvarchar(255),[Category]))),N'') AS category,
@@ -45,29 +39,47 @@ WITH rows AS (
            TRY_CONVERT(float,[NEW DE]), TRY_CONVERT(float,[Direct Equivalence])
     FROM [dbo].[LaborForecastQuarterCompareFinal_dev]
 ),
-totals AS (
+processed AS (
     SELECT DATEFROMPARTS(YEAR(forecast_date),MONTH(forecast_date),1) AS forecast_month,
-           segment, side, COUNT_BIG(*) AS row_count,
+           COALESCE(segment,N'(blank)') AS segment, side,
+           COUNT_BIG(*) AS row_count,
            SUM(new_de) AS new_de, SUM(prior_de) AS prior_de
     FROM rows
     WHERE forecast_date >= '2026-10-01' AND forecast_date < '2027-10-01'
       AND category = N'Hours'
-    GROUP BY DATEFROMPARTS(YEAR(forecast_date),MONTH(forecast_date),1),segment,side
+    GROUP BY DATEFROMPARTS(YEAR(forecast_date),MONTH(forecast_date),1),
+             COALESCE(segment,N'(blank)'),side
+),
+paired AS (
+    SELECT r.de_basis,COALESCE(r.forecast_month,p.forecast_month) AS forecast_month,
+           COALESCE(r.segment,p.segment) AS segment,
+           r.raw_de,
+           MAX(CASE WHEN p.side=N'original' THEN p.row_count END) AS original_rows,
+           MAX(CASE WHEN p.side=N'dev' THEN p.row_count END) AS dev_rows,
+           MAX(CASE WHEN p.side=N'original' THEN p.new_de END) AS original_new_de,
+           MAX(CASE WHEN p.side=N'dev' THEN p.new_de END) AS dev_new_de,
+           MAX(CASE WHEN p.side=N'original' THEN p.prior_de END) AS original_prior_de,
+           MAX(CASE WHEN p.side=N'dev' THEN p.prior_de END) AS dev_prior_de
+    FROM raw_values AS r
+    FULL OUTER JOIN processed AS p
+      ON p.forecast_month=r.forecast_month
+     AND p.segment=COALESCE(r.segment,N'(blank)')
+    GROUP BY r.de_basis,COALESCE(r.forecast_month,p.forecast_month),
+             COALESCE(r.segment,p.segment),r.raw_de
 )
-SELECT CONVERT(char(7),p.forecast_month,120) AS forecast_month, p.segment,
-       p.pivot_de, o.row_count AS original_rows, d.row_count AS dev_rows,
-       ROUND(o.new_de,3) AS original_new_de, ROUND(d.new_de,3) AS dev_new_de,
-       ROUND(o.new_de-p.pivot_de,3) AS original_new_minus_pivot,
-       ROUND(d.new_de-p.pivot_de,3) AS dev_new_minus_pivot,
-       ROUND(o.prior_de,3) AS original_prior_de,
-       ROUND(d.prior_de,3) AS dev_prior_de,
-       ROUND(o.prior_de-p.pivot_de,3) AS original_prior_minus_pivot
-FROM @pivot AS p
-LEFT JOIN totals AS o ON o.forecast_month=p.forecast_month AND o.segment=p.segment AND o.side=N'original'
-LEFT JOIN totals AS d ON d.forecast_month=p.forecast_month AND d.segment=p.segment AND d.side=N'dev'
-ORDER BY p.forecast_month,p.segment;
+SELECT CONVERT(char(7),forecast_month,120) AS forecast_month,
+       segment,de_basis,ROUND(raw_de,3) AS raw_de,
+       original_rows,dev_rows,
+       ROUND(original_new_de,3) AS original_new_de,
+       ROUND(dev_new_de,3) AS dev_new_de,
+       ROUND(raw_de-original_new_de,3) AS raw_minus_original,
+       ROUND(raw_de-dev_new_de,3) AS raw_minus_dev,
+       ROUND(original_prior_de,3) AS original_prior_de,
+       ROUND(dev_prior_de,3) AS dev_prior_de
+FROM paired
+ORDER BY forecast_month,segment;
 
--- 2. Monthly totals by Type and across all Types.
+-- 2. Monthly processed totals by Type and across all Types.
 -- No Segment filter is applied.
 WITH rows AS (
     SELECT N'original' AS side, TRY_CONVERT(date,[DateTime_Out]) AS forecast_date,
