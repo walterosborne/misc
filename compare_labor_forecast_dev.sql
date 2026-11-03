@@ -35,14 +35,13 @@ BEGIN
                 ELSE 'different type or length' END AS issue,
            TYPE_NAME(o.user_type_id) AS original_type, o.max_length AS original_max_length,
            TYPE_NAME(d.user_type_id) AS dev_type, d.max_length AS dev_max_length
-    FROM sys.columns AS o
-    FULL OUTER JOIN sys.columns AS d
-      ON d.object_id = @dev_id AND d.name = o.name
-    WHERE (o.object_id = @original_id OR o.object_id IS NULL)
-      AND (o.name IS NULL OR d.name IS NULL
-           OR o.system_type_id <> d.system_type_id
-           OR o.max_length <> d.max_length
-           OR o.precision <> d.precision OR o.scale <> d.scale)
+    FROM (SELECT * FROM sys.columns WHERE object_id = @original_id) AS o
+    FULL OUTER JOIN (SELECT * FROM sys.columns WHERE object_id = @dev_id) AS d
+      ON d.name = o.name
+    WHERE o.name IS NULL OR d.name IS NULL
+       OR o.system_type_id <> d.system_type_id
+       OR o.max_length <> d.max_length
+       OR o.precision <> d.precision OR o.scale <> d.scale
     ORDER BY column_name;
 
     -- Compare common business columns. Run-specific metadata is intentionally excluded.
